@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:13
@@ -8,22 +6,19 @@ services:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: etl_db
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
-      LANG: en_US.UTF-8
-      LC_ALL: en_US.UTF-8
     ports:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+      - ./sql/init/:/docker-entrypoint-initdb.d/  # Только init скрипты
     networks:
       - etl-data-pipeline-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d etl_db"]
-      interval: 5s
-      timeout: 10s
-      retries: 15
-      start_period: 40s
-    command: postgres -c client_encoding=UTF8
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   app:
     build:
@@ -37,26 +32,10 @@ services:
       - DB_USER=user
       - DB_PASSWORD=password
       - DB_NAME=etl_db
-      - DB_PORT=5432
-      - LANG=en_US.UTF-8
-      - LC_ALL=en_US.UTF-8
-      - PYTHONIOENCODING=utf-8
-      - PYTHONUTF8=1
-      - PYTHONPATH=/app
     networks:
       - etl-data-pipeline-network
     volumes:
-      - .:/app
-    command: >
-      sh -c "echo '=== STARTING ETL PIPELINE ===' &&
-             echo '1. Waiting for PostgreSQL...' &&
-             sleep 20 &&
-             echo '2. Checking if PostgreSQL is ready...' &&
-             pg_isready -h postgres -p 5432 -U user -d etl_db -t 30 &&
-             echo '3. Initializing database...' &&
-             cd /app && python data-pipeline/src/init_database.py &&
-             echo '4. Running tests...' &&
-             python -m pytest tests/ -v --tb=short -s"
+      - ./sql:/app/sql  # Монтируем все SQL файлы
 
 volumes:
   pg_data:
