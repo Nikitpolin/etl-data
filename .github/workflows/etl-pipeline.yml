@@ -1,0 +1,69 @@
+name: ETL Data
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: etl_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        
+    - name: Initialize database
+      run: |
+        python data-pipeline/src/init_database.py
+        
+    - name: Run ETL process
+      env:
+        DB_HOST: localhost
+        DB_USER: user
+        DB_PASSWORD: password
+        DB_NAME: etl_db
+      run: |
+        python data-pipeline/src/main.py
+        
+    - name: Run tests
+      env:
+        DB_HOST: localhost
+        DB_USER: user
+        DB_PASSWORD: password
+        DB_NAME: etl_db
+      run: |
+        python -m pytest tests/ -v
+        
+    - name: Build Docker image
+      run: |
+        docker build -t etl-data-pipeline .
+        
+    - name: Test Docker image
+      run: |
+        docker run --name test-etl --rm -e DB_HOST=localhost -e DB_USER=user -e DB_PASSWORD=password -e DB_NAME=etl_db etl-data-pipeline echo "Docker image test passed"
