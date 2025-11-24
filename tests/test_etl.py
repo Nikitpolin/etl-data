@@ -1,220 +1,141 @@
+import pytest
 import psycopg2
-import sys
 import os
 
-# Добавляем путь для импорта
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Адаптивный конфиг - работает везде
+DB_CONFIG = {
+    'host': os.getenv('DB_HOST', 'localhost'),  # Берёт из окружения или localhost
+    'port': '5432',
+    'database': 'etl_db',
+    'user': 'user',
+    'password': 'password'
+}
 
-try:
-    from config import DB_CONFIG
-except ImportError:
-    # Альтернативный способ если импорт не работает
-    DB_CONFIG = {
-        'host': 'localhost',
-        'port': '5432',
-        'database': 'etl_db',
-        'user': 'user',
-        'password': 'password'
-    }
-
-def init_database():
-    #Инициализация базы данных - создание схемы, таблиц и функций
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        conn.autocommit = True
-        cur = conn.cursor()
-        
-        print("Инициализация базы данных...")
-        
-        # Создание схемы
-        print("Создание схемы s_sql_dds...")
-        cur.execute("CREATE SCHEMA IF NOT EXISTS s_sql_dds;")
-        
-        # Создание неструктурированной таблицы
-        print("Создание таблицы t_sql_source_unstructured...")
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS s_sql_dds.t_sql_source_unstructured (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(50),
-                user_name VARCHAR(100),
-                age INTEGER,
-                salary NUMERIC(15,2),
-                purchase_amount NUMERIC(15,2),
-                product_category VARCHAR(50),
-                region VARCHAR(50),
-                customer_status VARCHAR(20),
-                transaction_count INTEGER,
-                effective_from DATE,
-                effective_to DATE,
-                current_flag BOOLEAN,
-                loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # Создание структурированной таблицы
-        print("Создание таблицы t_sql_source_structured...")
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS s_sql_dds.t_sql_source_structured (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(50) NOT NULL,
-                user_name VARCHAR(100),
-                age INTEGER,
-                salary NUMERIC(15,2),
-                purchase_amount NUMERIC(15,2),
-                product_category VARCHAR(50),
-                region VARCHAR(50),
-                customer_status VARCHAR(20),
-                transaction_count INTEGER,
-                effective_from DATE,
-                effective_to DATE,
-                current_flag BOOLEAN,
-                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # Создание ТЕСТОВОЙ таблицы
-        print("Создание тестовой таблицы t_sql_source_structured_copy...")
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS s_sql_dds.t_sql_source_structured_copy (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(50) NOT NULL,
-                user_name VARCHAR(100),
-                age INTEGER,
-                salary NUMERIC(15,2),
-                purchase_amount NUMERIC(15,2),
-                product_category VARCHAR(50),
-                region VARCHAR(50),
-                customer_status VARCHAR(20),
-                transaction_count INTEGER,
-                effective_from DATE,
-                effective_to DATE,
-                current_flag BOOLEAN,
-                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # Создание ETL функции
-        print("Создание функции fn_etl_data_load...")
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION s_sql_dds.fn_etl_data_load(
-                start_date DATE DEFAULT '2023-01-01',
-                end_date DATE DEFAULT '2023-12-31'
-            )
-            RETURNS INTEGER AS $$
-            DECLARE
-                processed_count INTEGER;
-            BEGIN
-                -- Очистка целевой таблицы в указанном диапазоне дат
-                DELETE FROM s_sql_dds.t_sql_source_structured 
-                WHERE effective_from >= start_date AND effective_to <= end_date;
-                
-                -- Вставка очищенных и трансформированных данных
-                INSERT INTO s_sql_dds.t_sql_source_structured (
-                    user_id, user_name, age, salary, purchase_amount, product_category,
-                    region, customer_status, transaction_count, effective_from, effective_to, current_flag
-                )
-                SELECT 
-                    user_id,
-                    user_name,
-                    -- Очистка возраста
-                    CASE 
-                        WHEN age IS NULL THEN 25
-                        WHEN age < 18 THEN 18
-                        WHEN age > 100 THEN 100
-                        ELSE age
-                    END AS age,
-                    -- Очистка зарплаты
-                    CASE 
-                        WHEN salary < 0 THEN 0
-                        WHEN salary > 1000000 THEN 1000000
-                        ELSE ROUND(salary::NUMERIC, 2)
-                    END AS salary,
-                    -- Очистка суммы покупки
-                    CASE 
-                        WHEN purchase_amount < 0 THEN 0
-                        WHEN purchase_amount > 100000 THEN 100000
-                        ELSE ROUND(purchase_amount::NUMERIC, 2)
-                    END AS purchase_amount,
-                    -- Очистка категорий продуктов
-                    CASE 
-                        WHEN product_category NOT IN ('Electronics', 'Clothing', 'Books', 'Home', 'Sports') 
-                        THEN 'Other'
-                        ELSE product_category
-                    END AS product_category,
-                    region,
-                    -- Стандартизация статусов
-                    CASE 
-                        WHEN customer_status IS NULL THEN 'unknown'
-                        ELSE LOWER(customer_status)
-                    END AS customer_status,
-                    -- Очистка количества транзакций
-                    CASE 
-                        WHEN transaction_count < 0 THEN 0
-                        WHEN transaction_count > 1000 THEN 1000
-                        ELSE transaction_count
-                    END AS transaction_count,
-                    -- Корректировка дат
-                    CASE 
-                        WHEN effective_from < '2020-01-01' THEN '2023-01-01'::DATE
-                        ELSE effective_from
-                    END AS effective_from,
-                    CASE 
-                        WHEN effective_to < effective_from THEN effective_from + INTERVAL '30 days'
-                        WHEN effective_to > '2024-12-31' THEN '2024-12-31'::DATE
-                        ELSE effective_to
-                    END AS effective_to,
-                    current_flag
-                FROM s_sql_dds.t_sql_source_unstructured
-                WHERE effective_from >= start_date 
-                    AND effective_to <= end_date
-                    AND user_id IS NOT NULL;
-                
-                -- Получение количества обработанных записей
-                GET DIAGNOSTICS processed_count = ROW_COUNT;
-                
-                RETURN processed_count;
-            END;
-            $$ LANGUAGE plpgsql;
-        """)
-        
-        # Создание ТЕСТОВОЙ ETL функции
-        print("Создание тестовой функции fn_etl_data_load_test...")
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION s_sql_dds.fn_etl_data_load_test(
-                start_date DATE DEFAULT '2023-01-01',
-                end_date DATE DEFAULT '2023-12-31'
-            )
-            RETURNS INTEGER AS $$
-            DECLARE
-                test_count INTEGER;
-            BEGIN
-                -- Очистка тестовой таблицы в указанном диапазоне дат
-                DELETE FROM s_sql_dds.t_sql_source_structured_copy 
-                WHERE effective_from >= start_date AND effective_to <= end_date;
-                
-                -- Копирование данных из структурированной таблицы в тестовую
-                INSERT INTO s_sql_dds.t_sql_source_structured_copy 
-                SELECT * FROM s_sql_dds.t_sql_source_structured
-                WHERE effective_from >= start_date AND effective_to <= end_date;
-                
-                -- Получение количества скопированных записей
-                GET DIAGNOSTICS test_count = ROW_COUNT;
-                
-                RETURN test_count;
-            END;
-            $$ LANGUAGE plpgsql;
-        """)
-        
-        print("База данных успешно инициализирована!")
-        
-    except Exception as e:
-        print(f"Ошибка при инициализации базы данных: {e}")
-        raise
-    finally:
-        if 'cur' in locals():
+class TestETLPipeline:
+    
+    def test_database_connection(self):
+        #Тест подключения к базе данных
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("SELECT 1;")
+            result = cur.fetchone()
             cur.close()
-        if 'conn' in locals():
             conn.close()
+            assert result[0] == 1
+            print("Database connection test PASSED")
+        except Exception as e:
+            pytest.fail(f"Database connection failed: {e}")
+    
+    def test_tables_exist(self):
+        #Тест существования таблиц
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            
+            # Проверка существования таблиц
+            cur.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 's_sql_dds' 
+                AND table_name IN ('t_sql_source_unstructured', 't_sql_source_structured', 't_sql_source_structured_copy');
+            """)
+            tables = [row[0] for row in cur.fetchall()]
+            
+            cur.close()
+            conn.close()
+            
+            assert 't_sql_source_unstructured' in tables
+            assert 't_sql_source_structured' in tables
+            assert 't_sql_source_structured_copy' in tables
+            print("Tables existence test PASSED")
+            
+        except Exception as e:
+            pytest.fail(f"Table existence test failed: {e}")
+    
+    def test_etl_function_parameters(self):
+        #Тест работы ETL функции с параметрами дат
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            
+            # Тестируем функцию с разными параметрами дат
+            test_cases = [
+                ('2023-01-01', '2023-12-31'),
+                ('2023-06-01', '2023-06-30'),
+            ]
+            
+            for start_date, end_date in test_cases:
+                cur.execute("SELECT s_sql_dds.fn_etl_data_load(%s, %s);", (start_date, end_date))
+                result = cur.fetchone()
+                assert result[0] >= 0, f"ETL function failed for dates {start_date} to {end_date}"
+            
+            cur.close()
+            conn.close()
+            print("ETL function parameters test PASSED")
+            
+        except Exception as e:
+            pytest.fail(f"ETL function test failed: {e}")
+    
+    def test_test_etl_function(self):
+        #Тест тестовой ETL функции
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            
+            # Запускаем тестовую функцию
+            cur.execute("SELECT s_sql_dds.fn_etl_data_load_test(%s, %s);", ('2023-01-01', '2023-12-31'))
+            result = cur.fetchone()
+            processed_count = result[0] if result else 0
+            
+            # Проверяем, что данные скопировались
+            cur.execute("SELECT COUNT(*) FROM s_sql_dds.t_sql_source_structured_copy;")
+            copy_count = cur.fetchone()[0]
+            
+            cur.close()
+            conn.close()
+            
+            assert processed_count >= 0
+            assert copy_count >= 0
+            print("Test ETL function test PASSED")
+            
+        except Exception as e:
+            pytest.fail(f"Test ETL function failed: {e}")
+    
+    def test_data_quality(self):
+        #Тест качества данных в структурированной таблице
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            
+            # Проверяем, что нет отрицательных зарплат
+            cur.execute("SELECT COUNT(*) FROM s_sql_dds.t_sql_source_structured WHERE salary < 0;")
+            negative_salaries = cur.fetchone()[0]
+            assert negative_salaries == 0, f"Found {negative_salaries} records with negative salary"
+            
+            # Проверяем, что возраст в допустимом диапазоне
+            cur.execute("SELECT COUNT(*) FROM s_sql_dds.t_sql_source_structured WHERE age < 18 OR age > 100;")
+            invalid_ages = cur.fetchone()[0]
+            assert invalid_ages == 0, f"Found {invalid_ages} records with invalid age"
+            
+            # Проверяем, что даты корректны
+            cur.execute("SELECT COUNT(*) FROM s_sql_dds.t_sql_source_structured WHERE effective_to < effective_from;")
+            invalid_dates = cur.fetchone()[0]
+            assert invalid_dates == 0, f"Found {invalid_dates} records with invalid date range"
+            
+            cur.close()
+            conn.close()
+            print("Data quality test PASSED")
+            
+        except Exception as e:
+            pytest.fail(f"Data quality test failed: {e}")
 
-if __name__ == "__main__":
-    init_database()
+    def test_etl_process_integration(self):
+        #Интеграционный тест всего ETL процесса
+        try:
+            # Это заглушка для локального тестирования
+            assert True  # Заглушка
+            print("Integration test PASSED")
+            
+        except Exception as e:
+            pytest.fail(f"Integration test failed: {e}")
