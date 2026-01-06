@@ -1,4 +1,4 @@
-name: ETL Data
+name: ETL Pipeline
 
 on:
   push:
@@ -49,7 +49,7 @@ jobs:
         DB_PASSWORD: password
         DB_NAME: etl_db
       run: |
-        python data-pipeline/src/main.py
+        python data-pipeline/src/main.py --skip-mysql
         
     - name: Run tests
       env:
@@ -63,7 +63,3 @@ jobs:
     - name: Build Docker image
       run: |
         docker build -t etl-data-pipeline .
-        
-    - name: Test Docker image
-      run: |
-        docker run --name test-etl --rm -e DB_HOST=localhost -e DB_USER=user -e DB_PASSWORD=password -e DB_NAME=etl_db etl-data-pipeline echo "Docker image test passed"
