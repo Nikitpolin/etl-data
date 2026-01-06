@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   postgres:
     image: postgres:13
@@ -10,7 +12,8 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./sql/init/:/docker-entrypoint-initdb.d/  # Только init скрипты
+      - ./sql/init/:/docker-entrypoint-initdb.d/
+      - ./sql/dds/:/docker-entrypoint-initdb.d/dds/
     networks:
       - etl-data-pipeline-network
     healthcheck:
@@ -18,7 +21,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+
+  mysql:
+    image: mysql:8.0
+    container_name: etl-data-pipeline-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: dwh_db
+    ports:
+      - "3307:3306"  # Изменили на 3307 внешний порт
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/dm/:/docker-entrypoint-initdb.d/
+    networks:
+      - etl-data-pipeline-network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -ppassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   app:
     build:
@@ -27,18 +48,26 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      mysql:
+        condition: service_healthy
     environment:
       - DB_HOST=postgres
       - DB_USER=user
       - DB_PASSWORD=password
       - DB_NAME=etl_db
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=password
+      - MYSQL_DB=dwh_db
+      - MYSQL_PORT=3306  # Внутренний порт остался 3306
     networks:
       - etl-data-pipeline-network
     volumes:
-      - ./sql:/app/sql  # Монтируем все SQL файлы
+      - .:/app
 
 volumes:
   pg_data:
+  mysql_data:
 
 networks:
   etl-data-pipeline-network:

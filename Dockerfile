@@ -13,5 +13,5 @@ COPY data-pipeline/ ./data-pipeline/
 COPY sql/ ./sql/
 COPY tests/ ./tests/
 
-# Команда запуска
-CMD ["python", "data-pipeline/src/main.py"]
+# Создаем точку входа которая будет ждать команд
+CMD ["tail", "-f", "/dev/null"]
